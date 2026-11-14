@@ -87,6 +87,30 @@
     }
     button.delete:hover { color: var(--danger); background: rgba(214, 69, 69, 0.1); }
     .empty { text-align: center; color: var(--muted); padding: 24px 0; }
+    select {
+      padding: 10px 8px;
+      font-size: 0.95rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+    }
+    select option { color: #1f2328; }
+    li { border-left: 4px solid transparent; padding-left: 10px; }
+    li.p-dusuk { border-left-color: #3fa65b; }
+    li.p-orta { border-left-color: #e0a526; }
+    li.p-yuksek { border-left-color: #d64545; }
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: #fff;
+    }
+    .p-dusuk .badge { background: #3fa65b; }
+    .p-orta .badge { background: #e0a526; }
+    .p-yuksek .badge { background: #d64545; }
+    li.done .badge { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -96,6 +120,11 @@
 
     <form id="form">
       <input type="text" id="input" placeholder="Yeni görev ekle..." autocomplete="off" required>
+      <select id="priority" aria-label="Önem derecesi">
+        <option value="dusuk">Düşük</option>
+        <option value="orta" selected>Orta</option>
+        <option value="yuksek">Yüksek</option>
+      </select>
       <button type="submit" class="add">Ekle</button>
     </form>
 
@@ -110,6 +139,8 @@
     const list = document.getElementById('list');
     const empty = document.getElementById('empty');
     const count = document.getElementById('count');
+    const prioritySelect = document.getElementById('priority');
+    const LABELS = { dusuk: 'Düşük', orta: 'Orta', yuksek: 'Yüksek' };
 
     let todos = load();
 
@@ -124,8 +155,13 @@
 
     function render() {
       list.innerHTML = '';
-      for (const todo of todos) {
+      const ORDER = { yuksek: 0, orta: 1, dusuk: 2 };
+      const rank = t => ORDER[t.priority] ?? ORDER.orta;
+      const sorted = [...todos].sort((a, b) => rank(a) - rank(b));
+      for (const todo of sorted) {
         const li = document.createElement('li');
+        const prio = LABELS[todo.priority] ? todo.priority : 'orta';
+        li.classList.add('p-' + prio);
         if (todo.done) li.classList.add('done');
 
         const checkbox = document.createElement('input');
@@ -144,7 +180,11 @@
         del.setAttribute('aria-label', 'Görevi sil');
         del.addEventListener('click', () => remove(todo.id));
 
-        li.append(checkbox, text, del);
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = LABELS[prio];
+
+        li.append(checkbox, text, badge, del);
         list.appendChild(li);
       }
 
@@ -155,9 +195,9 @@
         : '';
     }
 
-    function add(text) {
+    function add(text, priority) {
       const id = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-      todos.push({ id, text, done: false });
+      todos.push({ id, text, done: false, priority });
       save();
       render();
     }
@@ -179,7 +219,7 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
-      add(text);
+      add(text, prioritySelect.value);
       input.value = '';
       input.focus();
     });
