@@ -6,6 +6,7 @@
   <title>Görev Listesi</title>
   <style>
     :root {
+      color-scheme: light dark;
       --bg: #f4f5f7;
       --card: #ffffff;
       --text: #1f2328;
@@ -129,6 +130,50 @@
     li input.edit-text { padding: 6px 8px; font-size: 0.95rem; min-width: 0; }
     li select { padding: 6px 4px; }
     li span.badge, li span.expiry { flex: none; }
+    input[type="datetime-local"] {
+      padding: 10px 12px;
+      font-size: 1rem;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+    }
+    form { flex-wrap: wrap; }
+    form input[type="text"] { flex: 1 1 100%; }
+    form input[type="datetime-local"] { flex: 2 1 170px; }
+    form select { flex: 1 1 90px; }
+    form button.add { flex: 1 1 80px; }
+    li input[type="datetime-local"] { padding: 6px 8px; font-size: 0.9rem; flex: 1 1 160px; }
+    .due { display: block; color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
+    li.overdue .due { color: var(--danger); font-weight: 600; }
+    button.cal {
+      border: none;
+      background: none;
+      font-size: 1.05rem;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    button.cal:hover { background: rgba(79, 107, 237, 0.1); }
+    #toasts {
+      position: fixed;
+      top: 12px; left: 12px; right: 12px;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .toast {
+      pointer-events: auto;
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      width: 100%; max-width: 480px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+    .toast button { border: none; background: none; color: #fff; font-size: 1.3rem; cursor: pointer; }
     form input[type="text"] { min-width: 0; }
     select { font-size: 1rem; }
     @media (max-width: 480px) {
@@ -150,6 +195,7 @@
 
     <form id="form">
       <input type="text" id="input" placeholder="Yeni görev ekle..." autocomplete="off" required>
+      <input type="datetime-local" id="due" aria-label="Hatırlatma zamanı" title="Hatırlatma zamanı (isteğe bağlı)">
       <select id="priority" aria-label="Önem derecesi">
         <option value="dusuk">Düşük</option>
         <option value="orta" selected>Orta</option>
@@ -167,6 +213,7 @@
       <ul id="doneList"></ul>
     </details>
   </main>
+  <div id="toasts" role="status" aria-live="polite"></div>
 
   <script>
     const STORAGE_KEY = 'todos';
@@ -176,6 +223,8 @@
     const empty = document.getElementById('empty');
     const count = document.getElementById('count');
     const prioritySelect = document.getElementById('priority');
+    const dueInput = document.getElementById('due');
+    const toasts = document.getElementById('toasts');
     const doneList = document.getElementById('doneList');
     const folder = document.getElementById('folder');
     const folderTitle = document.getElementById('folderTitle');
@@ -227,6 +276,14 @@
 
         const text = document.createElement('span');
         text.textContent = todo.text;
+        if (todo.due) {
+          const when = new Date(todo.due);
+          const dueEl = document.createElement('small');
+          dueEl.className = 'due';
+          dueEl.textContent = '⏰ ' + formatDue(when);
+          text.appendChild(dueEl);
+          if (!todo.done && when.getTime() <= Date.now()) li.classList.add('overdue');
+        }
 
         const del = document.createElement('button');
         del.className = 'delete';
@@ -260,7 +317,17 @@
         edit.setAttribute('aria-label', 'Görevi düzenle');
         edit.addEventListener('click', () => startEdit(todo.id));
 
-        li.append(badge, edit, del);
+        li.append(badge);
+        if (todo.due) {
+          const cal = document.createElement('button');
+          cal.className = 'cal';
+          cal.textContent = '📅';
+          cal.title = 'Takvime ekle (telefon hatırlatması için)';
+          cal.setAttribute('aria-label', 'Takvime ekle');
+          cal.addEventListener('click', () => downloadIcs(todo));
+          li.append(cal);
+        }
+        li.append(edit, del);
         (todo.done ? doneList : list).appendChild(li);
       }
 
@@ -275,9 +342,10 @@
       folderTitle.textContent = `Tamamlananlar (${doneCount})`;
     }
 
-    function add(text, priority) {
+    function add(text, priority, due) {
+      if (due) askNotifyPermission();
       const id = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-      todos.push({ id, text, done: false, priority });
+      todos.push({ id, text, done: false, priority, due: due || null, notified: false });
       save();
       render();
     }
@@ -290,6 +358,94 @@
       }
       save();
       render();
+    }
+
+    function formatDue(d) {
+      return d.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // --- Hatırlatmalar ---
+    // Not: Tarayıcı yalnızca sayfa açıkken (arka planda canlıysa) zamanında bildirim gösterebilir.
+    // Sayfa kapalıyken güvenilir hatırlatma için 📅 ile görevi takvime ekleyin.
+    function askNotifyPermission() {
+      try {
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+      } catch {}
+    }
+
+    function showToast(msg) {
+      const el = document.createElement('div');
+      el.className = 'toast';
+      const span = document.createElement('span');
+      span.textContent = '⏰ ' + msg;
+      const close = document.createElement('button');
+      close.textContent = '×';
+      close.setAttribute('aria-label', 'Kapat');
+      close.addEventListener('click', () => el.remove());
+      el.append(span, close);
+      toasts.appendChild(el);
+      setTimeout(() => el.remove(), 30000);
+    }
+
+    async function notify(todo) {
+      showToast(todo.text);
+      try {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        const opts = { body: 'Hatırlatma zamanı geldi', tag: String(todo.id) };
+        const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+        if (reg) await reg.showNotification('⏰ ' + todo.text, opts);
+        else new Notification('⏰ ' + todo.text, opts);
+      } catch {}
+    }
+
+    function checkReminders() {
+      const now = Date.now();
+      let changed = false;
+      for (const t of todos) {
+        if (t.done || !t.due || t.notified) continue;
+        if (new Date(t.due).getTime() <= now) {
+          t.notified = true;
+          changed = true;
+          notify(t);
+        }
+      }
+      if (changed) { save(); render(); }
+    }
+
+    function icsDate(d) {
+      const p = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+    }
+
+    function icsEscape(s) {
+      return s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    }
+
+    function downloadIcs(todo) {
+      const start = new Date(todo.due);
+      const end = new Date(start.getTime() + 30 * 60000);
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+      const lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Gorev Listesi//TR',
+        'BEGIN:VEVENT',
+        `UID:${todo.id}@gorev-listesi`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART:${icsDate(start)}`,
+        `DTEND:${icsDate(end)}`,
+        `SUMMARY:${icsEscape(todo.text)}`,
+        'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEscape(todo.text)}`, 'TRIGGER:PT0S', 'END:VALARM',
+        'END:VEVENT', 'END:VCALENDAR'
+      ];
+      const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'gorev.ics';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
 
     function startEdit(id) {
@@ -316,10 +472,21 @@
       }
       sel.value = LABELS[todo.priority] ? todo.priority : 'orta';
 
+      const dueEdit = document.createElement('input');
+      dueEdit.type = 'datetime-local';
+      dueEdit.value = todo.due || '';
+      dueEdit.setAttribute('aria-label', 'Hatırlatma zamanı');
+
       const commit = () => {
         const name = nameInput.value.trim();
         if (name) todo.text = name;
         todo.priority = sel.value;
+        const newDue = dueEdit.value || null;
+        if (newDue !== (todo.due || null)) {
+          todo.notified = false;
+          if (newDue) askNotifyPermission();
+        }
+        todo.due = newDue;
         editingId = null;
         save();
         render();
@@ -345,7 +512,7 @@
       cancelBtn.setAttribute('aria-label', 'Düzenlemeden vazgeç');
       cancelBtn.addEventListener('click', cancel);
 
-      li.append(checkbox, nameInput, sel, saveBtn, cancelBtn);
+      li.append(checkbox, nameInput, dueEdit, sel, saveBtn, cancelBtn);
       requestAnimationFrame(() => { nameInput.focus(); nameInput.select(); });
     }
 
@@ -359,12 +526,20 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
-      add(text, prioritySelect.value);
+      add(text, prioritySelect.value, dueInput.value);
+      dueInput.value = '';
       input.value = '';
       input.focus();
     });
 
     render();
+
+    try {
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    } catch {}
+    checkReminders();
+    setInterval(checkReminders, 15000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) checkReminders(); });
   </script>
 </body>
 </html>
