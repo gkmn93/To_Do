@@ -111,6 +111,10 @@
     .p-orta .badge { background: #e0a526; }
     .p-yuksek .badge { background: #d64545; }
     li.done .badge { opacity: 0.5; }
+    details.folder { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; }
+    details.folder summary { cursor: pointer; color: var(--muted); font-size: 0.95rem; }
+    .folder-note { color: var(--muted); font-size: 0.8rem; margin: 8px 0 0; }
+    .expiry { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -130,6 +134,12 @@
 
     <ul id="list"></ul>
     <p class="empty" id="empty">Henüz görev yok.</p>
+
+    <details class="folder" id="folder" hidden>
+      <summary id="folderTitle"></summary>
+      <p class="folder-note">Tamamlanan görevler burada 30 gün saklanır, sonra otomatik silinir.</p>
+      <ul id="doneList"></ul>
+    </details>
   </main>
 
   <script>
@@ -140,9 +150,25 @@
     const empty = document.getElementById('empty');
     const count = document.getElementById('count');
     const prioritySelect = document.getElementById('priority');
+    const doneList = document.getElementById('doneList');
+    const folder = document.getElementById('folder');
+    const folderTitle = document.getElementById('folderTitle');
     const LABELS = { dusuk: 'Düşük', orta: 'Orta', yuksek: 'Yüksek' };
+    const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
     let todos = load();
+
+    // Tamamlanma tarihi olmayan eski görevlere şimdiyi ata, 30 günü geçenleri sil.
+    function purgeExpired() {
+      const now = Date.now();
+      let changed = false;
+      for (const t of todos) {
+        if (t.done && !t.doneAt) { t.doneAt = now; changed = true; }
+      }
+      const kept = todos.filter(t => !(t.done && now - t.doneAt > RETENTION_MS));
+      if (kept.length !== todos.length) { todos = kept; changed = true; }
+      if (changed) save();
+    }
 
     function load() {
       try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
@@ -154,7 +180,9 @@
     }
 
     function render() {
+      purgeExpired();
       list.innerHTML = '';
+      doneList.innerHTML = '';
       const ORDER = { yuksek: 0, orta: 1, dusuk: 2 };
       const rank = t => ORDER[t.priority] ?? ORDER.orta;
       const sorted = [...todos].sort((a, b) => rank(a) - rank(b));
@@ -184,15 +212,27 @@
         badge.className = 'badge';
         badge.textContent = LABELS[prio];
 
-        li.append(checkbox, text, badge, del);
-        list.appendChild(li);
+        li.append(checkbox, text);
+        if (todo.done) {
+          const daysLeft = Math.max(0, Math.ceil((todo.doneAt + RETENTION_MS - Date.now()) / 86400000));
+          const expiry = document.createElement('span');
+          expiry.className = 'expiry';
+          expiry.textContent = `${daysLeft} gün kaldı`;
+          li.append(expiry);
+        }
+        li.append(badge, del);
+        (todo.done ? doneList : list).appendChild(li);
       }
 
-      const remaining = todos.filter(t => !t.done).length;
-      empty.style.display = todos.length ? 'none' : 'block';
+      const doneCount = todos.filter(t => t.done).length;
+      const remaining = todos.length - doneCount;
+      empty.style.display = remaining ? 'none' : 'block';
+      empty.textContent = todos.length ? 'Bekleyen görev yok.' : 'Henüz görev yok.';
       count.textContent = todos.length
         ? `${todos.length} görev · ${remaining} kalan`
         : '';
+      folder.hidden = doneCount === 0;
+      folderTitle.textContent = `Tamamlananlar (${doneCount})`;
     }
 
     function add(text, priority) {
@@ -204,7 +244,10 @@
 
     function toggle(id) {
       const todo = todos.find(t => t.id === id);
-      if (todo) todo.done = !todo.done;
+      if (todo) {
+        todo.done = !todo.done;
+        todo.doneAt = todo.done ? Date.now() : null;
+      }
       save();
       render();
     }
