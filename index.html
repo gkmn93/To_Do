@@ -115,6 +115,19 @@
     details.folder summary { cursor: pointer; color: var(--muted); font-size: 0.95rem; }
     .folder-note { color: var(--muted); font-size: 0.8rem; margin: 8px 0 0; }
     .expiry { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+    button.edit, button.save, button.cancel {
+      border: none;
+      background: none;
+      color: var(--muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    button.edit:hover, button.save:hover { color: var(--accent); background: rgba(79, 107, 237, 0.1); }
+    button.cancel:hover { color: var(--danger); background: rgba(214, 69, 69, 0.1); }
+    li input.edit-text { padding: 6px 8px; font-size: 0.95rem; min-width: 0; }
+    li select { padding: 6px 4px; }
   </style>
 </head>
 <body>
@@ -155,6 +168,7 @@
     const folderTitle = document.getElementById('folderTitle');
     const LABELS = { dusuk: 'Düşük', orta: 'Orta', yuksek: 'Yüksek' };
     const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+    let editingId = null;
 
     let todos = load();
 
@@ -212,6 +226,12 @@
         badge.className = 'badge';
         badge.textContent = LABELS[prio];
 
+        if (todo.id === editingId) {
+          buildEditRow(li, todo, checkbox);
+          (todo.done ? doneList : list).appendChild(li);
+          continue;
+        }
+
         li.append(checkbox, text);
         if (todo.done) {
           const daysLeft = Math.max(0, Math.ceil((todo.doneAt + RETENTION_MS - Date.now()) / 86400000));
@@ -220,7 +240,14 @@
           expiry.textContent = `${daysLeft} gün kaldı`;
           li.append(expiry);
         }
-        li.append(badge, del);
+        const edit = document.createElement('button');
+        edit.className = 'edit';
+        edit.textContent = '✎';
+        edit.title = 'Düzenle';
+        edit.setAttribute('aria-label', 'Görevi düzenle');
+        edit.addEventListener('click', () => startEdit(todo.id));
+
+        li.append(badge, edit, del);
         (todo.done ? doneList : list).appendChild(li);
       }
 
@@ -250,6 +277,63 @@
       }
       save();
       render();
+    }
+
+    function startEdit(id) {
+      editingId = id;
+      render();
+    }
+
+    function buildEditRow(li, todo, checkbox) {
+      checkbox.disabled = true;
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'edit-text';
+      nameInput.value = todo.text;
+      nameInput.setAttribute('aria-label', 'Görev adı');
+
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', 'Önem derecesi');
+      for (const [value, label] of Object.entries(LABELS)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      }
+      sel.value = LABELS[todo.priority] ? todo.priority : 'orta';
+
+      const commit = () => {
+        const name = nameInput.value.trim();
+        if (name) todo.text = name;
+        todo.priority = sel.value;
+        editingId = null;
+        save();
+        render();
+      };
+      const cancel = () => { editingId = null; render(); };
+
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') cancel();
+      });
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'save';
+      saveBtn.textContent = '✓';
+      saveBtn.title = 'Kaydet';
+      saveBtn.setAttribute('aria-label', 'Değişiklikleri kaydet');
+      saveBtn.addEventListener('click', commit);
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'cancel';
+      cancelBtn.textContent = '✕';
+      cancelBtn.title = 'Vazgeç';
+      cancelBtn.setAttribute('aria-label', 'Düzenlemeden vazgeç');
+      cancelBtn.addEventListener('click', cancel);
+
+      li.append(checkbox, nameInput, sel, saveBtn, cancelBtn);
+      requestAnimationFrame(() => { nameInput.focus(); nameInput.select(); });
     }
 
     function remove(id) {
